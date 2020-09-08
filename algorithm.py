@@ -1,5 +1,7 @@
 import numpy as np
 import cv2
+from sklearn.decomposition import PCA
+import math
 
 def sd(arr, kernel):
     '''
@@ -47,8 +49,33 @@ def fgPts(arr):
     :return: 2 * n numpy matrix
     '''
     height, width = arr.shape
-    pts = [(i, j) for i in range(height) for j in range(width) if arr[i, j] > 0]
-    return np.mat(pts).transpose()
+    return [[j, i] for i in range(height) for j in range(width) if arr[i, j] > 0]
+
+def angle_of_vectors(v1, v2):
+    dot = v1[0] * v2[0] + v1[1] * v2[1]
+    mod = math.sqrt(v1[0] * v1[0] + v1[1] * v1[1]) * math.sqrt(v2[0] * v2[0] + v2[1] * v2[1])
+    return math.degrees(math.acos(dot / mod))
+
+def rotate(img, mask):
+    '''
+    :param img: 3D numpy array
+    :param mask: 2D binary numpy array
+    :return: (3D numpy array, 2D numpy array)
+    '''
+    pts = fgPts(mask)
+    pca = PCA(2)
+    pca.fit(pts)
+    angle = angle_of_vectors(pca.components_[0, :], (1, 0))
+    affineMat = cv2.getRotationMatrix2D((0, 0), -angle, 1)
+    new_pts = affineMat[:, :2] * np.mat(pts).transpose()
+    x_min, x_max, y_min, y_max = new_pts[0, :].min(), new_pts[0, :].max(), new_pts[1, :].min(), new_pts[1, :].max()
+    width, height = int(x_max - x_min), int(y_max - y_min)
+    affineMat[:, 2] = [-x_min, -y_min]
+    img_out = cv2.warpAffine(img, affineMat, (width, height), borderValue=(255, 255, 255))
+    mask_out = cv2.warpAffine(mask, affineMat, (width, height), borderValue=0)
+    return img_out, mask_out
+
+def rescale(arr)
 
 def registrate(img, mask, dsize):
     '''
@@ -57,10 +84,6 @@ def registrate(img, mask, dsize):
     :param dsize: (width, height)
     :return: (3D numpy array, 2D numpy array)
     '''
-    pts = fgPts(mask)
-    transMat = np.linalg.svd(pts)[0]
-    pts_new = transMat * pts
-    affineMat = np.concatenate((transMat, [[-0], [0]]), axis=1)
-    img_out = cv2.warpAffine(img, affineMat, dsize, borderValue=(255, 255, 255))
-    mask_out = cv2.warpAffine(mask, affineMat, dsize, borderValue=0)
+    img_rot, mask_rot = rotate(img, mask)
+    img_out, mask_out = cv2.resize(img_rot, dsize), cv2.resize(mask_rot, dsize)
     return img_out, mask_out

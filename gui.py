@@ -83,6 +83,7 @@ class MainDlg(QDialog):
             self.images['registrate'][key], self.data['registrate'][key] = registrate(img, mask, dsize)
         self.newPage('registrate')
         self.on_comboBox_currentIndexChanged(0)
+        self.tabWidget.setCurrentIndex(self.tabWidget.count() - 1)
         print('Done.')
 
     @pyqtSlot()
