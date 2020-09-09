@@ -5,7 +5,7 @@ from PyQt5.uic import loadUi
 import cv2
 import os
 import numpy as np
-from algorithm import extract, registrate
+from algorithm import extract, registrate, global_gmm
 from utils import cvimg2qpixmap, fitView
 
 class MainDlg(QDialog):
@@ -77,7 +77,7 @@ class MainDlg(QDialog):
         print('Registrate..')
         self.images['registrate'] = {}
         self.data['registrate'] = {}
-        dsize = 300, 200
+        dsize = 300, 128
         for key, img in self.images['extract'].items():
             mask = self.data['extract'][key]
             self.images['registrate'][key], self.data['registrate'][key] = registrate(img, mask, dsize)
@@ -89,7 +89,22 @@ class MainDlg(QDialog):
     @pyqtSlot()
     def on_btnGlobalGmm_clicked(self):
         """全局gmm"""
-        print('global gmm')
+        if 'global gmm' in self.images.keys():
+            print('Global GMM already performed.')
+            return
+        if not 'registrate' in self.images.keys():
+            self.on_btnRegistrate_clicked()
+        print('Performing Global GMM..')
+        self.images['global gmm'] = {}
+        self.data['global gmm'] = {}
+        K = 5
+        for key, img in self.images['registrate'].items():
+            mask = self.data['registrate'][key]
+            self.images['global gmm'][key], self.data['global gmm'][key] = global_gmm(img, mask, K)
+        self.newPage('global gmm')
+        self.on_comboBox_currentIndexChanged(0)
+        self.tabWidget.setCurrentIndex(self.tabWidget.count() - 1)
+        print('Done.')
 
     @pyqtSlot()
     def on_btnLocalGmm_clicked(self):
