@@ -1,9 +1,10 @@
 import numpy as np
 import cv2
 from sklearn.decomposition import PCA
-from sklearn.mixture import GaussianMixture
+from sklearn.mixture import GaussianMixture, BayesianGaussianMixture
 from skimage.color import label2rgb
 from skimage import img_as_ubyte
+from skimage.measure import block_reduce
 import math
 
 def sd(arr, kernel):
@@ -66,8 +67,7 @@ def rotate(img, mask):
     :return: (3D numpy array, 2D numpy array)
     '''
     pts = np.flip(fgPts(mask))
-    pca = PCA(2)
-    pca.fit(pts)
+    pca = PCA(2).fit(pts)
     angle = angle_of_vectors(pca.components_[0, :], (1, 0))
     affineMat = cv2.getRotationMatrix2D((0, 0), -angle, 1)
     new_pts = np.dot(affineMat[:, :2], pts.transpose())
@@ -89,7 +89,7 @@ def registrate(img, mask, dsize):
     img_out, mask_out = cv2.resize(img_rot, dsize), cv2.resize(mask_rot, dsize)
     return img_out, mask_out
 
-def gmm(img, pts, n):
+def gmm_hist(img, pts, n):
     '''
     :param img: 3D numpy array
     :param pts: list of foreground points
@@ -97,35 +97,67 @@ def gmm(img, pts, n):
     :return: (label, means)
     '''
     hist = [img[p[0], p[1]] for p in pts]
-    gm = GaussianMixture(n)
-    lab = gm.fit_predict(hist)
+    gm = GaussianMixture(n).fit(hist)
+    lab = gm.predict(hist)
     means = [np.mean(gm.means_[i,:]) for i in range(n)]
     return lab, means
 
-def global_gmm(img, mask, n):
+def global_gmm(img, mask, n, patch):
     '''
     :param img: 3D numpy array
     :param mask: 2D binary numpy array
     :param n: number of clusters
+    :param block: size of block
     :return: (3D numpy array, 2D numpy array)
     '''
-    all_mean = np.mean(img[mask > 0, :])
-    mask_temp = mask.copy()
-    mask_out = np.zeros(mask.shape)
+    img_down = block_reduce(img, (*patch, 3), np.mean)
+    mask_down = block_reduce(mask, patch, np.min)
+    all_mean = np.mean(img_down[mask_down > 0, :])
+    mask_out = np.zeros(mask_down.shape, dtype=np.uint8)
     nLabel = 0
     while True:
-        pts = fgPts(mask_temp)
-        label, means = gmm(img, pts, n)
+        pts = fgPts(mask_down)
+        label, means = gmm_hist(img_down, pts, n)
         min_cluster, min_mean = np.argmin(means), min(means)
         if min_mean >= all_mean:
             break
         stain_pts = pts[label == min_cluster]
         nLabel += 1
         for p in stain_pts:
-            mask_temp[p[0], p[1]] = 0
+            mask_down[p[0], p[1]] = 0
             mask_out[p[0], p[1]] = nLabel
-    img_out = img_as_ubyte(label2rgb(mask_out, img, bg_label=0))
+    height, width = mask.shape
+    mask_up = cv2.resize(mask_out, (width, height), interpolation=cv2.INTER_NEAREST)
+    img_out = img_as_ubyte(label2rgb(mask_up, img, bg_label=0))
     return img_out, mask_out
 
+def gmm_blob(pts, n):
+    '''
+    :param pts:
+    :param n:
+    :return:
+    '''
+    gm = BayesianGaussianMixture(n_components=n).fit(pts)
+    lab = gm.predict(pts)
+    return lab
 
-
+def local_gmm(img, mask, n):
+    '''
+    :param mask:
+    :param n:
+    :return:
+    '''
+    mask_sum = np.zeros(mask.shape, dtype=np.uint8)
+    mask_out = []
+    count = 1
+    for level in range(1, mask.max() + 1):
+        pts = fgPts(mask == level)
+        label = gmm_blob(pts, min(len(pts), n))
+        mask_out.append(label)
+        for i in range(len(pts)):
+            mask_sum[pts[i][0], pts[i][1]] = count + label[i]
+        count += label.max()
+    height, width = img.shape[:2]
+    mask_up = cv2.resize(mask_sum, (width, height), interpolation=cv2.INTER_NEAREST)
+    img_out = img_as_ubyte(label2rgb(mask_up, img, bg_label=0))
+    return img_out, mask_out

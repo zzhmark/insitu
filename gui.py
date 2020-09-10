@@ -5,7 +5,7 @@ from PyQt5.uic import loadUi
 import cv2
 import os
 import numpy as np
-from algorithm import extract, registrate, global_gmm
+from algorithm import extract, registrate, global_gmm, local_gmm
 from utils import cvimg2qpixmap, fitView
 
 class MainDlg(QDialog):
@@ -63,6 +63,7 @@ class MainDlg(QDialog):
         for key, img in self.images['raw'].items():
             self.images['extract'][key], self.data['extract'][key] = extract(img, kernel, sd_thr)
         self.newPage('extract')
+        self.tabWidget.setCurrentIndex(self.tabWidget.count() - 1)
         self.on_comboBox_currentIndexChanged(0)
         print('Done.')
 
@@ -82,8 +83,8 @@ class MainDlg(QDialog):
             mask = self.data['extract'][key]
             self.images['registrate'][key], self.data['registrate'][key] = registrate(img, mask, dsize)
         self.newPage('registrate')
-        self.on_comboBox_currentIndexChanged(0)
         self.tabWidget.setCurrentIndex(self.tabWidget.count() - 1)
+        self.on_comboBox_currentIndexChanged(0)
         print('Done.')
 
     @pyqtSlot()
@@ -98,18 +99,35 @@ class MainDlg(QDialog):
         self.images['global gmm'] = {}
         self.data['global gmm'] = {}
         K = 5
+        patch = (3, 3)
         for key, img in self.images['registrate'].items():
             mask = self.data['registrate'][key]
-            self.images['global gmm'][key], self.data['global gmm'][key] = global_gmm(img, mask, K)
+            self.images['global gmm'][key], self.data['global gmm'][key] = global_gmm(img, mask, K, patch)
         self.newPage('global gmm')
-        self.on_comboBox_currentIndexChanged(0)
         self.tabWidget.setCurrentIndex(self.tabWidget.count() - 1)
+        self.on_comboBox_currentIndexChanged(0)
         print('Done.')
 
     @pyqtSlot()
     def on_btnLocalGmm_clicked(self):
         """局部gmm"""
-        print('local gmm')
+        if 'local gmm' in self.images.keys():
+            print('Local GMM already performed.')
+            return
+        if not 'global gmm' in self.images.keys():
+            self.on_btnGlobalGmm_clicked()
+        print('Performing Local GMM..')
+        self.images['local gmm'] = {}
+        self.data['local gmm'] = {}
+        K = 5
+        patch = (3, 3)
+        for key, img in self.images['registrate'].items():
+            mask = self.data['global gmm'][key]
+            self.images['local gmm'][key], self.data['local gmm'][key] = local_gmm(img, mask, K)
+        self.newPage('local gmm')
+        self.tabWidget.setCurrentIndex(self.tabWidget.count() - 1)
+        self.on_comboBox_currentIndexChanged(0)
+        print('Done.')
 
     @pyqtSlot()
     def on_btnHybrid_clicked(self):
