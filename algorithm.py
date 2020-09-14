@@ -6,6 +6,7 @@ from skimage.color import label2rgb
 from skimage import img_as_ubyte
 from skimage.measure import block_reduce
 import math
+from sklearn.metrics import normalized_mutual_info_score
 
 def sd(arr, kernel):
     '''
@@ -115,12 +116,14 @@ def global_gmm(img, mask, n, patch):
     all_mean = np.mean(img_down[mask_down > 0, :])
     mask_out = np.zeros(mask_down.shape, dtype=np.uint8)
     nLabel = 0
+    means_out = []
     while True:
         pts = fgPts(mask_down)
         label, means = gmm_hist(img_down, pts, n)
         min_cluster, min_mean = np.argmin(means), min(means)
         if min_mean >= all_mean:
             break
+        means_out.append(min_mean)
         stain_pts = pts[label == min_cluster]
         nLabel += 1
         for p in stain_pts:
@@ -129,7 +132,7 @@ def global_gmm(img, mask, n, patch):
     height, width = mask.shape
     mask_up = cv2.resize(mask_out, (width, height), interpolation=cv2.INTER_NEAREST)
     img_out = img_as_ubyte(label2rgb(mask_up, img, bg_label=0))
-    return img_out, mask_out
+    return img_out, mask_out, means_out
 
 def gmm_blob(pts, n):
     '''
@@ -149,7 +152,7 @@ def local_gmm(img, mask, n):
     '''
     mask_sum = np.zeros(mask.shape, dtype=np.uint8)
     mask_out = []
-    count = 1
+    count = 0
     for level in range(1, mask.max() + 1):
         pts = fgPts(mask == level)
         label = gmm_blob(pts, min(len(pts), n))
@@ -161,3 +164,31 @@ def local_gmm(img, mask, n):
     mask_up = cv2.resize(mask_sum, (width, height), interpolation=cv2.INTER_NEAREST)
     img_out = img_as_ubyte(label2rgb(mask_up, img, bg_label=0))
     return img_out, mask_out
+
+def global_score(masks):
+    '''
+    :param mask: numpy 2D arrays
+    :param means: lists
+    :return: numpy 2D array
+    '''
+    n = len(masks)
+    score = np.zeros((n, n))
+    mask_1d = [np.reshape(mask, -1) for mask in masks.values()]
+    for i in range(n):
+        for j in range(n):
+            score[i, j] = normalized_mutual_info_score(mask_1d[i], mask_1d[j])
+    return score
+
+def blob_score(blob1, blob2):
+    '''
+    :param blob1:
+    :param blob2:
+    :return:
+    '''
+    grad = (1 - np.abs(blob1[0] - blob2[0]) / 256)
+    set1, set2 = set(fgPts(blob1[1])), set(fgPts(blob2[1]))
+    overlap = len(set1.intersection(set2)) / len(set2.union(set2))
+    return grad * overlap
+
+def local_score():
+    pass
