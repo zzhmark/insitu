@@ -1,11 +1,9 @@
 from PyQt5.QtWidgets import QDialog, QGraphicsView, QFileDialog, QGraphicsScene
-from PyQt5.QtGui import QPixmap, QImage
 from PyQt5.QtCore import pyqtSlot
 from PyQt5.uic import loadUi
 import cv2
 import os
-import numpy as np
-from algorithm import extract, registrate, global_gmm, local_gmm, global_score
+from algorithm import batch_apply
 from utils import cvimg2qpixmap, fitView
 
 class MainDlg(QDialog):
@@ -29,7 +27,9 @@ class MainDlg(QDialog):
         self.scenes = {'raw':QGraphicsScene()}
         self.rawImageView.setScene(self.scenes['raw'])
         self.images = {}
-        self.data = {}
+        self.masks = {}
+        self.scores = {}
+        self.means = {}
         self.enableStepBtns(False)
         self.comboBox.clear()
 
@@ -37,107 +37,121 @@ class MainDlg(QDialog):
     def on_btnOpen_clicked(self):
         """打开文件"""
         print('Loading images..')
-        filenames, filter = QFileDialog.getOpenFileNames(self, "选择打开的一组图像", filter="Images (*.bmp)")
+        filenames, filter = QFileDialog.getOpenFileNames(self,
+                                                         "选择打开的一组图像",
+                                                         filter="Images (*.bmp)")
         if len(filenames) == 0:
             return
         self.clear()
-        self.images['raw'] = {}
-        for i in filenames:
-            print(i)
-            self.images['raw'][os.path.basename(i)] = cv2.imread(i, cv2.IMREAD_COLOR)
+        basenames = [os.path.basename(i) for i in filenames]
+        img_dict = dict.fromkeys(basenames)
+        for full, base in zip(filenames, basenames):
+            print(full)
+            img_dict[base] = cv2.imread(full, cv2.IMREAD_COLOR)
+        self.images['raw'] = img_dict
         self.enableStepBtns(True)
-        self.comboBox.addItems([os.path.basename(i) for i in filenames])
+        self.comboBox.addItems(basenames)
         print('Done.')
 
     @pyqtSlot()
     def on_btnExtract_clicked(self):
-        """提取"""
-        if 'extract' in self.images.keys():
+        step = 'extract'
+        if step in self.images.keys():
             print('Already extracted.')
             return
-        print('Extract..')
-        kernel = (3, 3)
-        sd_thr = 3
-        self.images['extract'] = {}
-        self.data['extract'] = {}
-        for key, img in self.images['raw'].items():
-            self.images['extract'][key], self.data['extract'][key] = extract(img, kernel, sd_thr)
-        self.newPage('extract')
+        print('Extracting..')
+
+        self.images[step], self.masks[step] = \
+            batch_apply(step,
+                        images = self.images['raw'],
+                        kernel = (3, 3),
+                        sd_thr = 3)
+
+        self.newPage(step)
         self.tabWidget.setCurrentIndex(self.tabWidget.count() - 1)
         self.on_comboBox_currentIndexChanged(0)
         print('Done.')
 
     @pyqtSlot(bool)
     def on_btnRegistrate_clicked(self):
-        """配准"""
-        if 'registrate' in self.images.keys():
+        step = 'registrate'
+        if step in self.images.keys():
             print('Already registrated.')
             return
         if not 'extract' in self.images.keys():
             self.on_btnExtract_clicked()
-        print('Registrate..')
-        self.images['registrate'] = {}
-        self.data['registrate'] = {}
-        dsize = 300, 128
-        for key, img in self.images['extract'].items():
-            mask = self.data['extract'][key]
-            self.images['registrate'][key], self.data['registrate'][key] = registrate(img, mask, dsize)
-        self.newPage('registrate')
+        print('Registrating..')
+
+        self.images[step], self.masks[step] = \
+            batch_apply(step,
+                        keys = self.images['raw'].keys(),
+                        images = self.images['extract'].values(),
+                        masks = self.masks['extract'].values(),
+                        dsize = (300, 120))
+
+        self.newPage(step)
         self.tabWidget.setCurrentIndex(self.tabWidget.count() - 1)
         self.on_comboBox_currentIndexChanged(0)
         print('Done.')
 
     @pyqtSlot()
     def on_btnGlobalGmm_clicked(self):
-        """全局gmm"""
-        if 'global gmm' in self.images.keys():
+        step = 'global gmm'
+        if step in self.images.keys():
             print('Global GMM already performed.')
             return
         if not 'registrate' in self.images.keys():
             self.on_btnRegistrate_clicked()
         print('Performing Global GMM..')
-        self.images['global gmm'] = {}
-        self.data['global gmm mask'] = {}
-        self.data['global gmm means'] = {}
-        K = 10
-        patch = (3, 3)
-        for key, img in self.images['registrate'].items():
-            mask = self.data['registrate'][key]
-            image, mask, means = global_gmm(img, mask, K, patch)
-            self.images['global gmm'][key] = image
-            self.data['global gmm mask'][key] = mask
-            self.data['global gmm means'][key] = means
-        self.data['global score'] = global_score(self.data['global gmm mask'])
+
+        self.images[step], self.masks[step], self.means[step], self.scores[step] = \
+            batch_apply(step,
+                        keys = self.images['raw'].keys(),
+                        images = self.images['registrate'].values(),
+                        masks = self.masks['registrate'].values(),
+                        K = 5,
+                        patch = (3, 3))
+
         self.newPage('global gmm')
         self.tabWidget.setCurrentIndex(self.tabWidget.count() - 1)
         self.on_comboBox_currentIndexChanged(0)
         print('Done.')
-        print(self.data['global score'])
+        print(self.scores[step])
 
     @pyqtSlot()
     def on_btnLocalGmm_clicked(self):
-        """局部gmm"""
-        if 'local gmm' in self.images.keys():
+        step = 'local gmm'
+        if step in self.images.keys():
             print('Local GMM already performed.')
             return
         if not 'global gmm' in self.images.keys():
             self.on_btnGlobalGmm_clicked()
         print('Performing Local GMM..')
-        self.images['local gmm'] = {}
-        self.data['local gmm'] = {}
-        K = 10
-        for key, img in self.images['registrate'].items():
-            mask = self.data['global gmm mask'][key]
-            self.images['local gmm'][key], self.data['local gmm'][key] = local_gmm(img, mask, K)
-        self.newPage('local gmm')
+
+        self.images[step], self.masks[step], self.means[step], self.scores[step] = \
+            batch_apply(step,
+                        keys = self.images['raw'].keys(),
+                        images = self.images['registrate'].values(),
+                        masks = self.masks['global gmm'].values(),
+                        means = self.means['global gmm'].values(),
+                        K = 10)
+
+        self.newPage(step)
         self.tabWidget.setCurrentIndex(self.tabWidget.count() - 1)
         self.on_comboBox_currentIndexChanged(0)
         print('Done.')
+        print(self.scores[step])
 
     @pyqtSlot()
     def on_btnHybrid_clicked(self):
-        """融合"""
-        print('hybrid')
+        step = 'hybrid'
+        if step in self.images.keys():
+            print('Hybriding already performed.')
+            return
+        if not 'local gmm' in self.images.keys():
+            self.on_btnLocalGmm_clicked()
+        print('Hybriding..')
+
 
     @pyqtSlot()
     def on_btnScore_clicked(self):
@@ -145,9 +159,9 @@ class MainDlg(QDialog):
         print('score')
 
     @pyqtSlot()
-    def on_btnPipeline_clicked(self):
+    def on_btnExport_clicked(self):
         """一次完成"""
-        print('pipeline')
+        print('export')
 
     @pyqtSlot(int)
     def on_comboBox_currentIndexChanged(self, index):
