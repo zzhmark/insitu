@@ -1,5 +1,14 @@
 from PyQt5.QtGui import QImage, QPixmap
 import cv2
+from enum import Enum
+
+class Step(Enum):
+    RAW = 0
+    EXTRACT = 1
+    REGISTER = 2
+    GLOBAL_GMM = 3
+    LOCAL_GMM = 4
+    SCORE = 5
 
 def cvimg2qpixmap(img):
     '''

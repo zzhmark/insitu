@@ -7,6 +7,8 @@ from skimage import img_as_ubyte
 from skimage.measure import block_reduce
 import math
 from sklearn.metrics import normalized_mutual_info_score
+from utils import Step
+import pandas as pd
 
 def sd(arr, kernel):
     '''
@@ -79,7 +81,7 @@ def rotate(img, mask):
     mask_out = cv2.warpAffine(mask, affineMat, (width, height), borderValue=0)
     return img_out, mask_out
 
-def registrate(img, mask, dsize):
+def register(img, mask, dsize):
     '''
     :param img: 3D numpy array
     :param mask: 2D numpy array
@@ -116,23 +118,23 @@ def global_gmm(img, mask, n, patch):
     all_mean = np.mean(img_down[mask_down > 0, :])
     mask_out = np.zeros(mask_down.shape, dtype=np.uint8)
     nLabel = 0
-    means_out = []
+    mean_set_out = []
     while True:
         pts = fgPts(mask_down)
         label, means = gmm_hist(img_down, pts, n)
         min_cluster, min_mean = np.argmin(means), min(means)
         if min_mean >= all_mean:
             break
-        means_out.append(min_mean)
+        mean_set_out.append(min_mean)
         stain_pts = pts[label == min_cluster]
         nLabel += 1
         for p in stain_pts:
-            mask_down[p[0], p[1]] = 0
-            mask_out[p[0], p[1]] = nLabel
+            mask_down[tuple(p)] = 0
+            mask_out[tuple(p)] = nLabel
     height, width = mask.shape
     mask_up = cv2.resize(mask_out, (width, height), interpolation=cv2.INTER_NEAREST)
     img_out = img_as_ubyte(label2rgb(mask_up, img, bg_label=0))
-    return img_out, mask_out, means_out
+    return img_out, mask_out, mean_set_out
 
 def gmm_blob(pts, n):
     '''
@@ -140,55 +142,127 @@ def gmm_blob(pts, n):
     :param n:
     :return:
     '''
-    gm = BayesianGaussianMixture(n_components=n).fit(pts)
+    gm = BayesianGaussianMixture(n_components=min(len(pts), n)).fit(pts)
     lab = gm.predict(pts)
     return lab
 
-def local_gmm(img, mask, n):
+def local_gmm(img, mask, mean_set, n):
     '''
+    :param img:
     :param mask:
+    :param mean_set:
     :param n:
     :return:
     '''
-    mask_sum = np.zeros(mask.shape, dtype=np.uint8)
-    mask_out = []
-    count = 0
-    for level in range(1, mask.max() + 1):
-        pts = fgPts(mask == level)
-        label = gmm_blob(pts, min(len(pts), n))
-        mask_out.append(label)
-        for i in range(len(pts)):
-            mask_sum[pts[i][0], pts[i][1]] = count + label[i]
-        count += label.max()
+    mask_out = np.zeros(mask.shape, dtype=np.uint8)
+    mean_set_out = []
+    for i, mean in zip(range(mask.max()), mean_set):
+        pts = fgPts(mask == i + 1)
+        label = gmm_blob(pts, n)
+        level = np.unique(label)
+        label = [np.where(level == i)[0][0] + 1 for i in label]
+        start = mask_out.max()
+        for p, lab in zip(pts, label):
+            mask_out[tuple(p)] = start + lab
+        mean_set_out.extend([mean] * np.max(label))
     height, width = img.shape[:2]
-    mask_up = cv2.resize(mask_sum, (width, height), interpolation=cv2.INTER_NEAREST)
+    mask_up = cv2.resize(mask_out, (width, height), interpolation=cv2.INTER_NEAREST)
     img_out = img_as_ubyte(label2rgb(mask_up, img, bg_label=0))
-    return img_out, mask_out
+    return img_out, mask_out, mean_set_out
 
-def global_score(masks):
+def blob_score(pts1, pts2, mean1, mean2):
     '''
-    :param mask: numpy 2D arrays
-    :param means: lists
-    :return: numpy 2D array
-    '''
-    n = len(masks)
-    score = np.zeros((n, n))
-    mask_1d = [np.reshape(mask, -1) for mask in masks.values()]
-    for i in range(n):
-        for j in range(n):
-            score[i, j] = normalized_mutual_info_score(mask_1d[i], mask_1d[j])
-    return score
-
-def blob_score(blob1, blob2):
-    '''
-    :param blob1:
-    :param blob2:
+    :param mask1:
+    :param mask2:
+    :param mean1:
+    :param mean2:
     :return:
     '''
-    grad = (1 - np.abs(blob1[0] - blob2[0]) / 256)
-    set1, set2 = set(fgPts(blob1[1])), set(fgPts(blob2[1]))
-    overlap = len(set1.intersection(set2)) / len(set2.union(set2))
-    return grad * overlap
+    grad_term = 1 - np.abs(mean1 - mean2) / 256
+    set1, set2 = set(tuple(i) for i in pts1), set(tuple(i) for i in pts2)
+    overlap_term = len(set1.intersection(set2)) / len(set2.union(set2))
+    return grad_term * overlap_term
 
-def local_score():
-    pass
+def local_score(mask1, mask2, mean_set1, mean_set2):
+    '''
+    :param mask1:
+    :param mask2:
+    :param mean_set1:
+    :param mean_set2:
+    :return:
+    '''
+    n1, n2 = len(mean_set1), len(mean_set2)
+    pts1, pts2 = [fgPts(mask1 == i + 1) for i in range(n1)], \
+                 [fgPts(mask2 == i + 1) for i in range(n2)]
+    score_blobs = np.zeros((n1, n2))
+    for i, p1, mean1 in zip(range(n1), pts1, mean_set1):
+        for j, p2, mean2 in zip(range(n2), pts2, mean_set2):
+            score_blobs[i, j] = blob_score(p1, p2, mean1, mean2)
+    return score_blobs.max(axis=0).sum() + score_blobs.max(axis=1).sum()
+
+def batch_apply(step, **kwargs):
+    '''
+    :param step: string
+    :param kwargs:
+    :return:
+    '''
+    images = {}
+    masks = {}
+
+    if step == Step.EXTRACT:
+        for key, img in kwargs['images'].items():
+            images[key], masks[key] = extract(img, kwargs['kernel'], kwargs['thr'])
+        return images, masks
+
+    if step == Step.REGISTER:
+        for key, img, mask in zip(kwargs['keys'], 
+                                  kwargs['images'], 
+                                  kwargs['masks']):
+            images[key], masks[key] = register(img, mask, kwargs['size'])
+        return images, masks
+
+    mean_sets = {}
+
+    if step == Step.GLOBAL_GMM:
+        for key, img, mask in zip(kwargs['keys'], 
+                                  kwargs['images'], 
+                                  kwargs['masks']):
+            images[key], masks[key], mean_sets[key] = global_gmm(img, mask, kwargs['nok'], kwargs['patch'])
+        return images, masks, mean_sets
+
+    if step == Step.LOCAL_GMM:
+        for key, img, mask, mean_set in zip(kwargs['keys'], 
+                                            kwargs['images'], 
+                                            kwargs['masks'], 
+                                            kwargs['mean_sets']):
+            images[key], masks[key], mean_sets[key] = local_gmm(img, mask, mean_set, kwargs['nok'])
+        return images, masks, mean_sets
+
+    if step == Step.SCORE:
+        n = len(kwargs['keys'])
+        
+        # global
+        global_score_table = np.zeros((n, n))
+        mask_batch_1d = [np.reshape(mask, -1) for mask in kwargs['global_masks'].values()]
+        for i, mask1 in zip(range(n), mask_batch_1d):
+            for j, mask2 in zip(range(n), mask_batch_1d):
+                global_score_table[i, j] = normalized_mutual_info_score(mask1, mask2)
+                
+        # local
+        local_score_table = np.zeros((n, n))
+        for i, mask1, mean_set1 in zip(range(n),
+                                    kwargs['local_masks'].values(),
+                                    kwargs['mean_sets'].values()):
+            for j, mask2, mean_set2 in zip(range(n),
+                                        kwargs['local_masks'].values(),
+                                        kwargs['mean_sets'].values()):
+                local_score_table[i, j] = local_score(mask1, mask2, mean_set1, mean_set2)
+
+        global_score_table = pd.DataFrame(global_score_table,
+                                          columns=kwargs['keys'],
+                                          index=kwargs['keys'])
+        local_score_table = pd.DataFrame(local_score_table,
+                                         columns=kwargs['keys'],
+                                         index=kwargs['keys'])
+        hybrid_score_table = global_score_table * local_score_table
+        return global_score_table, local_score_table, hybrid_score_table
