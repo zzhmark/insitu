@@ -339,12 +339,19 @@ def batch_apply(step, **kwargs):
 
         # global
         global_score_table = np.zeros((n, n))
-        mask_batch_1d = [np.reshape(mask, -1)
-                         for mask in kwargs['global_masks'].values()]
-        for i, mask1 in zip(range(n), mask_batch_1d):
-            for j, mask2 in zip(range(n), mask_batch_1d):
+        for i, mask1 in zip(range(n), kwargs['global_masks'].values()):
+            for j, mask2 in zip(range(n), kwargs['global_masks'].values()):
+                mask1_flip_x = np.flip(mask1, axis=0)
+                mask2_flip_y = np.flip(mask2, axis=1)
+                mask1_1d = np.resize(mask1, -1)
+                mask2_1d = np.resize(mask2, -1)
+                mask1_flip_x_1d = np.resize(mask1_flip_x, -1)
+                mask2_flip_y_1d = np.resize(mask2_flip_y, -1)
                 global_score_table[i, j] = \
-                    normalized_mutual_info_score(mask1, mask2)
+                    max(normalized_mutual_info_score(mask1_1d, mask2_1d),
+                        normalized_mutual_info_score(mask1_flip_x_1d, mask2_1d),
+                        normalized_mutual_info_score(mask1_1d, mask2_flip_y_1d),
+                        normalized_mutual_info_score(mask1_flip_x_1d, mask2_flip_y_1d))
 
         # local
         local_score_table = np.zeros((n, n))
@@ -363,7 +370,7 @@ def batch_apply(step, **kwargs):
                         local_score(mask1_flip_x, mask2, means1, means2),
                         local_score(mask1, mask2_flip_y, means1, means2),
                         local_score(mask1_flip_x, mask2_flip_y, means1, means2))
-        local_score_table = normalize(local_score_table, norm='l1', axis=0)
+        local_score_table = normalize(local_score_table, norm='max', axis=0)
 
         global_score_table = pd.DataFrame(global_score_table,
                                           columns=kwargs['keys'],
