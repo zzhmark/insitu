@@ -23,10 +23,10 @@ def gmm(data: np.ndarray, n: int, method: str = 'default') -> \
     # no more than the length of input data.
     noc = min(len(data), n)
     if method.lower() == 'bayesian':
-        model = BayesianGaussianMixture(n_components=noc)
+        model = BayesianGaussianMixture(n_components=noc, random_state=123)
         model.fit(data)
     else:
-        model = GaussianMixture(n_components=noc)
+        model = GaussianMixture(n_components=noc, random_state=123)
         model.fit(data)
     return model.predict(data), model.means_
 
