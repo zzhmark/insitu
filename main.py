@@ -2,11 +2,11 @@ import sys
 
 from PyQt5.QtWidgets import QApplication
 
-from gui import MainDlg
+from GUI.main_dialog import MainDialog
 
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
-    dlg = MainDlg()
+    dlg = MainDialog()
     dlg.show()
     sys.exit(app.exec_())

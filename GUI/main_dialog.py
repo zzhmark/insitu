@@ -10,28 +10,27 @@ from scipy.sparse import save_npz
 
 from algorithm import batch_apply
 from utils import cvimg2qpixmap, fitView, Step
+from .ask_sparse_dialog import AskSparseDialog
 
 
-class MainDlg(QDialog):
+class MainDialog(QDialog):
 
     def __init__(self):
-        super(MainDlg, self).__init__()
-        loadUi('dialog.ui', self)
+        super(MainDialog, self).__init__()
+        loadUi('GUI/rc/MainDialog.ui', self)
+        self.enableStepButtons(False)
+
+        # Model/View setup.
+        # Graphics.
         self.scenes = {i: QGraphicsScene() for i in Step}
         self.viewRaw.setScene(self.scenes[Step.RAW])
         self.viewExtract.setScene(self.scenes[Step.EXTRACT])
         self.viewRegister.setScene(self.scenes[Step.REGISTER])
         self.viewGlobalGmm.setScene(self.scenes[Step.GLOBAL_GMM])
         self.viewLocalGmm.setScene(self.scenes[Step.LOCAL_GMM])
+        # Columns and tables.
         self.selectorModel = QStandardItemModel()
         self.viewSelector.setModel(self.selectorModel)
-        self.images = {}
-        self.masks = {}
-        self.scores = {}
-        self.gmm_models = {}
-        self.metadata = pd.DataFrame(columns=[0, 1])
-        self.enableStepButtons(False)
-        self.supportedFormats = ['.bmp']
         self.viewSelector.setColumnWidths([110] * 4)
         self.scoreTable = QTableView()
         self.scoreTable.setMinimumWidth(387)
@@ -46,12 +45,23 @@ class MainDlg(QDialog):
         self.scoreTable.setColumnWidth(2, 100)
         self.scoreTable.setSortingEnabled(True)
 
-    def enableStepButtons(self, enable):
+        # Data init.
+        self.images = {}
+        self.masks = {}
+        self.labels = {}
+        self.scores = {}
+        self.gmm_models = {}
+        self.metadata = pd.DataFrame(columns=[0, 1])
+
+        # Signal/Slot Connection
+        self.scoreTable.clicked.connect(self.on_scoreTable_clicked)
+
+    def enableStepButtons(self, enable: bool):
         self.btnExtract.setEnabled(enable)
         self.btnRegister.setEnabled(enable)
         self.btnGlobalGmm.setEnabled(enable)
         self.btnLocalGmm.setEnabled(enable)
-        self.btnScore.setEnabled(enable)
+        self.btnHybrid.setEnabled(enable)
         self.btnExport.setEnabled(enable)
 
     def reset(self):
@@ -64,26 +74,19 @@ class MainDlg(QDialog):
         for scene in self.scenes.values():
             scene.clear()
         self.enableStepButtons(False)
-        self.clearScoreTable()
+        self.tableModel.setRowCount(0)
 
-    def undoSince(self, step):
-        for data in [self.images, self.masks, self.gmm_models, self.scores]:
+    def undoSince(self, step: Step):
+        for data in [self.images, self.masks, self.labels, self.gmm_models, self.scores]:
             keys = [key for key in data.keys() if key.value >= step.value]
             for i in keys:
                 data.pop(i)
-        if step.value <= Step.SCORE.value:
-            self.clearScoreTable()
 
-    def updateImages(self, index):
-        if index == QModelIndex():
-            return
-        image_id = self.selectorModel.itemFromIndex(index).text()
-        if image_id not in self.metadata.index:
-            return
+    def updateImages(self, index: str):
         for scene in self.scenes.values():
             scene.clear()
         for step in self.images.keys():
-            image_resize = fitView(self.images[step][image_id], self.scenes[step].views()[0])
+            image_resize = fitView(self.images[step][index], self.scenes[step].views()[0])
             self.scenes[step].addPixmap(cvimg2qpixmap(image_resize))
 
     @pyqtSlot()
@@ -92,8 +95,8 @@ class MainDlg(QDialog):
         step = Step.RAW
         folder = QFileDialog.getExistingDirectory(self, '选择一个目录', '', QFileDialog.ShowDirsOnly)
         if folder == '':
+            print('Aborted.')
             return
-
         self.reset()
         self.images[step] = {}
         for gene in os.listdir(folder):
@@ -110,7 +113,7 @@ class MainDlg(QDialog):
                 gene_item.appendRow(stage_item)
                 for file in os.listdir(stage_dir):
                     image_id, ext = os.path.splitext(file)
-                    if ext not in self.supportedFormats:
+                    if ext not in ['.bmp']:
                         continue
                     filename = os.path.join(folder, gene, stage, file)
                     self.images[step][image_id] = cv2.imread(filename, cv2.IMREAD_COLOR)
@@ -129,10 +132,10 @@ class MainDlg(QDialog):
     def on_btnExtract_clicked(self):
         sd_kernel_size_input = self.edtSdKernelSize.text()
         sd_thr_input = self.edtSdThr.text()
-        if sd_kernel_size_input.isnumeric() and sd_thr_input.isnumeric():
+        try:
             sd_kernel = (int(sd_kernel_size_input),) * 2
-            sd_thr = int(sd_thr_input)
-        else:
+            sd_thr = float(sd_thr_input)
+        except ValueError:
             print('Invalid input!')
             return
         print('Extracting..')
@@ -143,16 +146,16 @@ class MainDlg(QDialog):
                         images=self.images[Step.RAW],
                         kernel=sd_kernel,
                         thr=sd_thr)
-        self.updateImages(self.viewSelector.currentIndex())
+        self.on_viewSelector_updatePreviewWidget(self.viewSelector.currentIndex())
         print('Done.')
 
     @pyqtSlot(bool)
     def on_btnRegister_clicked(self):
         width_input = self.edtWidth.text()
         height_input = self.edtHeight.text()
-        if width_input.isnumeric() and height_input.isnumeric():
+        try:
             size = (int(width_input), int(height_input))
-        else:
+        except ValueError:
             print('Invalid input!')
             return
         if Step.EXTRACT not in self.images.keys():
@@ -166,17 +169,17 @@ class MainDlg(QDialog):
                         images=self.images[Step.EXTRACT].values(),
                         masks=self.masks[Step.EXTRACT].values(),
                         size=size)
-        self.updateImages(self.viewSelector.currentIndex())
+        self.on_viewSelector_updatePreviewWidget(self.viewSelector.currentIndex())
         print('Done.')
 
     @pyqtSlot()
     def on_btnGlobalGmm_clicked(self):
         num_kernel_input = self.edtGlobalNumKernel.text()
         pooling_rate_input = self.edtPoolingRate.text()
-        if num_kernel_input.isnumeric() and pooling_rate_input.isnumeric():
+        try:
             num_kernel = int(num_kernel_input)
             patch = (int(pooling_rate_input),) * 2
-        else:
+        except ValueError:
             print('Invalid input!')
             return
         if Step.REGISTER not in self.images.keys():
@@ -184,22 +187,24 @@ class MainDlg(QDialog):
         print('Performing Global GMM..')
         step = Step.GLOBAL_GMM
         self.undoSince(step)
-        self.images[step], self.masks[step], self.gmm_models[step] = \
+        self.images[step], self.masks[step], self.labels[step], self.gmm_models[step], self.scores[step] = \
             batch_apply(step,
                         keys=self.metadata.index,
                         images=self.images[Step.REGISTER].values(),
                         masks=self.masks[Step.REGISTER].values(),
                         nok=num_kernel,
                         patch=patch)
-        self.updateImages(self.viewSelector.currentIndex())
+        self.on_viewSelector_updatePreviewWidget(self.viewSelector.currentIndex())
         print('Done.')
 
     @pyqtSlot()
     def on_btnLocalGmm_clicked(self):
         num_kernel_input = self.edtGlobalNumKernel.text()
-        if num_kernel_input.isnumeric():
+        global_cutoff_input = self.edtGlobalCutoff.text()
+        try:
             num_kernel = int(num_kernel_input)
-        else:
+            global_cutoff = float(global_cutoff_input)
+        except ValueError:
             print('Invalid input!')
             return
         if Step.GLOBAL_GMM not in self.images.keys():
@@ -207,41 +212,38 @@ class MainDlg(QDialog):
         print('Performing Local GMM..')
         step = Step.LOCAL_GMM
         self.undoSince(step)
-        self.images[step], self.masks[step], self.gmm_models[step] = \
+        self.images[step], self.labels[step], self.gmm_models[step], self.scores[step] = \
             batch_apply(step,
                         keys=self.metadata.index,
                         images=self.images[Step.REGISTER].values(),
-                        masks=self.masks[Step.GLOBAL_GMM].values(),
-                        global_models=self.gmm_models[Step.GLOBAL_GMM].values(),
+                        labels=self.labels[Step.GLOBAL_GMM].values(),
+                        models=self.gmm_models[Step.GLOBAL_GMM].values(),
+                        scores=self.scores[Step.GLOBAL_GMM],
+                        cutoff=global_cutoff,
                         nok=num_kernel)
-        self.updateImages(self.viewSelector.currentIndex())
+        self.on_viewSelector_updatePreviewWidget(self.viewSelector.currentIndex())
         print('Done.')
 
     @pyqtSlot()
-    def on_btnScore_clicked(self):
+    def on_btnHybrid_clicked(self):
         if Step.LOCAL_GMM not in self.images.keys():
             self.on_btnLocalGmm_clicked()
         print('Scoring..')
-        step = Step.SCORE
+        step = Step.HYBRID
         self.undoSince(step)
-        self.scores[Step.GLOBAL_GMM], self.scores[Step.LOCAL_GMM], self.scores[step] = \
-            batch_apply(step,
-                        keys=self.metadata.index,
-                        global_masks=self.masks[Step.GLOBAL_GMM],
-                        local_masks=self.masks[Step.LOCAL_GMM],
-                        global_models=self.gmm_models[Step.GLOBAL_GMM])
-        self.updateScoreTable(self.viewSelector.currentIndex())
+        self.scores[step] = self.scores[Step.GLOBAL_GMM] * self.scores[Step.LOCAL_GMM]
+        self.on_viewSelector_updatePreviewWidget(self.viewSelector.currentIndex())
         print('Done.')
 
     @pyqtSlot()
     def on_btnExport_clicked(self):
-        if Step.SCORE not in self.scores.keys():
-            self.on_btnScore_clicked()
         folder = QFileDialog.getExistingDirectory(self, '选择一个目录', '', QFileDialog.ShowDirsOnly)
         if folder == "":
+            print('Aborted.')
             return
-        dlg = ExportDialog()
+        dlg = AskSparseDialog()
         if dlg.exec_() != QDialog.Accepted:
+            print('Aborted.')
             return
         new_folder = {'images', 'masks', 'gmm_models', 'scores'}.difference(os.listdir(folder))
         for i in new_folder:
@@ -274,7 +276,6 @@ class MainDlg(QDialog):
             for image_id, gmm_model in gmm_models.items():
                 gmm_model.to_csv(os.path.join(sub_folder, image_id + '.csv'))
 
-
         # scores
         if dlg.chSparse.isChecked():
             thr_list = [float(dlg.edtGlobalThr.text()),
@@ -288,6 +289,7 @@ class MainDlg(QDialog):
                          table_sparse.sparse.to_coo())
             with open(os.path.join(folder, 'scores', 'thresholds.txt'), 'w') as f:
                 f.write('GLOBAL=' + dlg.edtGlobalThr.text() + '\n')
+                f.write('GLOBAL_CUTOFF=' + self.edtGlobalCutoff.text() + '\n')
                 f.write('LOCAL=' + dlg.edtLocalThr.text() + '\n')
                 f.write('HYBRID=' + dlg.edtHybridThr.text() + '\n')
         else:
@@ -295,38 +297,28 @@ class MainDlg(QDialog):
                 table.to_csv(os.path.join(folder, 'scores', step.name.lower() + '.csv'))
 
     @pyqtSlot(QModelIndex)
-    def on_viewSelector_updatePreviewWidget(self, index):
-        self.updateImages(index)
-        self.updateScoreTable(index)
+    def on_viewSelector_updatePreviewWidget(self, index: QModelIndex):
+        if index != QModelIndex():
+            image_id = self.selectorModel.itemFromIndex(index).text()
+            if image_id in self.metadata.index:
+                self.updateImages(image_id)
+                if len(self.scores) > 0:
+                    self.updateScoreTable(image_id)
 
-    def clearScoreTable(self):
+    @pyqtSlot(QModelIndex)
+    def on_scoreTable_clicked(self, index: QModelIndex):
+        if index != QModelIndex():
+            image_id = self.tableModel.itemFromIndex(index).text()
+            if image_id in self.metadata.index:
+                self.updateImages(image_id)
+
+    def updateScoreTable(self, index: str):
         self.tableModel.setRowCount(0)
-
-    def updateScoreTable(self, index):
-        if Step.SCORE not in self.scores.keys():
-            return
-        if index == QModelIndex():
-            return
-        ref_id = self.selectorModel.itemFromIndex(index).text()
-        if ref_id not in self.metadata.index:
-            return
-        self.clearScoreTable()
         for ind, row in self.metadata.iterrows():
-            self.tableModel.appendRow([QStandardItem(row['gene']),
-                                       QStandardItem(row['stage']),
-                                       QStandardItem(ind),
-                                       QStandardItem(str(self.scores[Step.GLOBAL_GMM][ind][ref_id])),
-                                       QStandardItem(str(self.scores[Step.LOCAL_GMM][ind][ref_id])),
-                                       QStandardItem(str(self.scores[Step.SCORE][ind][ref_id]))])
+            new_row = [QStandardItem(row['gene']),
+                       QStandardItem(row['stage']),
+                       QStandardItem(ind)]
+            for scores in self.scores.values():
+                new_row += [QStandardItem(str(scores[ind][index]))]
+            self.tableModel.appendRow(new_row)
         self.scoreTable.setSortingEnabled(True)
-
-
-class ExportDialog(QDialog):
-
-    def __init__(self):
-        super(ExportDialog, self).__init__()
-        loadUi('export.ui', self)
-
-    pyqtSlot(bool)
-    def on_chSparse_toggled(self, checked):
-        self.groupScoreThr.setEnabled(checked)

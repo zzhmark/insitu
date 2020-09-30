@@ -10,7 +10,7 @@ class Step(Enum):
     REGISTER = 2
     GLOBAL_GMM = 3
     LOCAL_GMM = 4
-    SCORE = 5
+    HYBRID = 5
 
 
 def cvimg2qpixmap(img):
