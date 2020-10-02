@@ -8,7 +8,7 @@ from skimage import img_as_ubyte
 from skimage.measure import block_reduce
 import pandas as pd
 
-from .basic import adjust2gray, fgPts
+from .basic import saturation_rectified_intensity, fg_pts
 
 
 def gmm(data: np.ndarray, n: int, method: str = 'default') -> \
@@ -35,7 +35,7 @@ def global_gmm(image: np.ndarray, mask: np.ndarray,
                n: int, patch: Tuple[int, int]) -> \
         Tuple[np.ndarray, np.ndarray, np.ndarray, pd.DataFrame]:
     """
-    :param image: color image, 3D numpy array
+    :param image: grayscale image, 2D numpy array
     :param mask: binary image, 2D binary numpy array
     :param n: number of components
     :param patch: size of block
@@ -44,12 +44,8 @@ def global_gmm(image: np.ndarray, mask: np.ndarray,
     the minimalist mean of GMM models and separate the
     corresponding points.
     """
-    # Convert color image to grayscale.
-    # Strengthen staining signals and remove false positive patterns.
-    image_adjusted = adjust2gray(image)
     # Down sample the images and masks to reduce calculation.
-    image_down = block_reduce(image_adjusted, patch,
-                              np.mean, 255).astype(np.uint8)
+    image_down = block_reduce(image, patch, np.mean, 255)
     mask_down = block_reduce(mask, patch, np.min)
     mask_out = mask_down.copy()
     global_mean = int(np.mean(image_down[mask_down > 0]))
@@ -58,7 +54,7 @@ def global_gmm(image: np.ndarray, mask: np.ndarray,
     model_out = pd.DataFrame(columns=[0, 1])
     while True:
         # Retrieve current foreground points.
-        pts = fgPts(mask_down)
+        pts = fg_pts(mask_down)
         # The model fits the foreground pixels' intensity.
         model_input = np.array([[image_down[tuple(p)]
                                  for p in pts]]).transpose()
@@ -89,8 +85,7 @@ def local_gmm(image: np.array, mask: np.ndarray,
               global_model: pd.DataFrame, n: int) -> \
         Tuple[np.ndarray, np.ndarray, pd.DataFrame]:
     """
-    :type mask: numpy.array
-    :param image: bgr image, 3D numpy array
+    :param image: grayscale image, 2D numpy array
     :param mask: binary image, 2D numpy array
     :param global_model: parameters of global gmm, pandas data frame
     :param n: maximum number of components for the bayesian algorithm
@@ -102,7 +97,7 @@ def local_gmm(image: np.array, mask: np.ndarray,
     model_out = pd.DataFrame(columns=['label', 'mean'])
     # Iterate over different grayscale levels in the global model.
     for i, mean in zip(global_model.index, global_model['mean']):
-        pts = fgPts(mask == i)  # Retrieve points with a specific label.
+        pts = fg_pts(mask == i)  # Retrieve points with a specific label.
         labels = gmm(pts, n, 'bayesian')[0]
         # Adjust labels from 0..n-1 to 1..n.
         # Because labels can be discontinuous.
@@ -117,7 +112,7 @@ def local_gmm(image: np.array, mask: np.ndarray,
         model_out = model_out.append(model)
     model_out = model_out.set_index('label')
     # Label the output image
-    height, width = image.shape[:2]
+    height, width = image.shape
     mask_up = cv2.resize(label_out, (width, height),
                          interpolation=cv2.INTER_NEAREST)
     image_out = img_as_ubyte(label2rgb(mask_up, image, bg_label=0))

@@ -3,7 +3,7 @@ import numpy as np
 from sklearn.metrics import normalized_mutual_info_score
 import pandas as pd
 
-from .basic import fgPts
+from .basic import fg_pts
 
 
 def blob_score(pts1: np.ndarray, pts2: np.ndarray,
@@ -37,8 +37,8 @@ def local_score(label1: np.ndarray, label2: np.ndarray,
     """
     n1, n2 = len(means1), len(means2)
     # List points for different levels.
-    pts_list1 = [fgPts(label1 == i + 1) for i in range(n1)]
-    pts_list2 = [fgPts(label2 == i + 1) for i in range(n2)]
+    pts_list1 = [fg_pts(label1 == i + 1) for i in range(n1)]
+    pts_list2 = [fg_pts(label2 == i + 1) for i in range(n2)]
     score_blobs = np.zeros((n1, n2))
     for i, pts1, mean1 in zip(range(n1), pts_list1, means1):
         for j, pts2, mean2 in zip(range(n2), pts_list2, means2):
@@ -75,6 +75,10 @@ def global_gmm_compare(mask1: np.ndarray, mask2: np.ndarray,
     fg2 = (mask1_flip_x_1d > 0) | (mask2_1d > 0)
     fg3 = (mask1_1d > 0) | (mask2_flip_y_1d > 0)
     fg4 = (mask1_flip_x_1d > 0) | (mask2_flip_y_1d > 0)
+    # fg1 = (label1_1d > 0) | (label2_1d > 0)
+    # fg2 = (label1_flip_x_1d > 0) | (label2_1d > 0)
+    # fg3 = (label1_1d > 0) | (label2_flip_y_1d > 0)
+    # fg4 = (label1_flip_x_1d > 0) | (label2_flip_y_1d > 0)
     # Scores.
     score1 = normalized_mutual_info_score(label1_1d[fg1], label2_1d[fg1])
     score2 = normalized_mutual_info_score(label1_flip_x_1d[fg2], label2_1d[fg2])

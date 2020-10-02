@@ -61,7 +61,7 @@ class MainDialog(QDialog):
         self.btnRegister.setEnabled(enable)
         self.btnGlobalGmm.setEnabled(enable)
         self.btnLocalGmm.setEnabled(enable)
-        self.btnHybrid.setEnabled(enable)
+        self.btnScore.setEnabled(enable)
         self.btnExport.setEnabled(enable)
 
     def reset(self):
@@ -187,7 +187,7 @@ class MainDialog(QDialog):
         print('Performing Global GMM..')
         step = Step.GLOBAL_GMM
         self.undoSince(step)
-        self.images[step], self.masks[step], self.labels[step], self.gmm_models[step], self.scores[step] = \
+        self.images[step], self.masks[step], self.labels[step], self.gmm_models[step] = \
             batch_apply(step,
                         keys=self.metadata.index,
                         images=self.images[Step.REGISTER].values(),
@@ -200,10 +200,8 @@ class MainDialog(QDialog):
     @pyqtSlot()
     def on_btnLocalGmm_clicked(self):
         num_kernel_input = self.edtGlobalNumKernel.text()
-        global_cutoff_input = self.edtGlobalCutoff.text()
         try:
             num_kernel = int(num_kernel_input)
-            global_cutoff = float(global_cutoff_input)
         except ValueError:
             print('Invalid input!')
             return
@@ -212,26 +210,37 @@ class MainDialog(QDialog):
         print('Performing Local GMM..')
         step = Step.LOCAL_GMM
         self.undoSince(step)
-        self.images[step], self.labels[step], self.gmm_models[step], self.scores[step] = \
+        self.images[step], self.labels[step], self.gmm_models[step] = \
             batch_apply(step,
                         keys=self.metadata.index,
                         images=self.images[Step.REGISTER].values(),
                         labels=self.labels[Step.GLOBAL_GMM].values(),
                         models=self.gmm_models[Step.GLOBAL_GMM].values(),
-                        scores=self.scores[Step.GLOBAL_GMM],
-                        cutoff=global_cutoff,
                         nok=num_kernel)
         self.on_viewSelector_updatePreviewWidget(self.viewSelector.currentIndex())
         print('Done.')
 
     @pyqtSlot()
-    def on_btnHybrid_clicked(self):
+    def on_btnScore_clicked(self):
+        global_cutoff_input = self.edtGlobalCutoff.text()
+        try:
+            global_cutoff = float(global_cutoff_input)
+        except ValueError:
+            print('Invalid input!')
+            return
         if Step.LOCAL_GMM not in self.images.keys():
             self.on_btnLocalGmm_clicked()
         print('Scoring..')
         step = Step.HYBRID
         self.undoSince(step)
-        self.scores[step] = self.scores[Step.GLOBAL_GMM] * self.scores[Step.LOCAL_GMM]
+        self.scores[Step.GLOBAL_GMM], self.scores[Step.LOCAL_GMM], self.scores[step] = \
+            batch_apply(step,
+                        keys=self.metadata.index,
+                        masks=self.masks[Step.REGISTER],
+                        global_labels=self.labels[Step.GLOBAL_GMM],
+                        local_labels=self.labels[Step.LOCAL_GMM],
+                        local_models=self.gmm_models[Step.LOCAL_GMM],
+                        cutoff=global_cutoff)
         self.on_viewSelector_updatePreviewWidget(self.viewSelector.currentIndex())
         print('Done.')
 
@@ -302,8 +311,7 @@ class MainDialog(QDialog):
             image_id = self.selectorModel.itemFromIndex(index).text()
             if image_id in self.metadata.index:
                 self.updateImages(image_id)
-                if len(self.scores) > 0:
-                    self.updateScoreTable(image_id)
+                self.updateScoreTable(image_id)
 
     @pyqtSlot(QModelIndex)
     def on_scoreTable_clicked(self, index: QModelIndex):
