@@ -404,7 +404,7 @@
        </widget>
       </item>
       <item row="8" column="0">
-       <widget class="QPushButton" name="btnScore">
+       <widget class="QPushButton" name="btnHybrid">
         <property name="sizePolicy">
          <sizepolicy hsizetype="Minimum" vsizetype="Minimum">
           <horstretch>0</horstretch>
@@ -412,7 +412,7 @@
          </sizepolicy>
         </property>
         <property name="text">
-         <string>打分</string>
+         <string>融合打分</string>
         </property>
        </widget>
       </item>

@@ -75,16 +75,12 @@ def global_gmm_compare(mask1: np.ndarray, mask2: np.ndarray,
     fg2 = (mask1_flip_x_1d > 0) | (mask2_1d > 0)
     fg3 = (mask1_1d > 0) | (mask2_flip_y_1d > 0)
     fg4 = (mask1_flip_x_1d > 0) | (mask2_flip_y_1d > 0)
-    # fg1 = (label1_1d > 0) | (label2_1d > 0)
-    # fg2 = (label1_flip_x_1d > 0) | (label2_1d > 0)
-    # fg3 = (label1_1d > 0) | (label2_flip_y_1d > 0)
-    # fg4 = (label1_flip_x_1d > 0) | (label2_flip_y_1d > 0)
     # Scores.
     score1 = normalized_mutual_info_score(label1_1d[fg1], label2_1d[fg1])
     score2 = normalized_mutual_info_score(label1_flip_x_1d[fg2], label2_1d[fg2])
     score3 = normalized_mutual_info_score(label1_1d[fg3], label2_flip_y_1d[fg3])
     score4 = normalized_mutual_info_score(label1_flip_x_1d[fg4], label2_flip_y_1d[fg4])
-    return score1  # max(score1, score2, score3, score4)
+    return score1, score2, score3, score4
 
 
 def local_gmm_compare(label1: np.ndarray, label2: np.ndarray,
@@ -103,4 +99,4 @@ def local_gmm_compare(label1: np.ndarray, label2: np.ndarray,
     score2 = local_score(label1_flip_x, label2, means1, means2)
     score3 = local_score(label1, label2_flip_y, means1, means2)
     score4 = local_score(label1_flip_x, label2_flip_y, means1, means2)
-    return score1  # max(score1, score2, score3, score4)
+    return score1, score2, score3, score4
