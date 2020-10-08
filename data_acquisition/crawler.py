@@ -6,16 +6,16 @@ from selenium import webdriver
 import pandas as pd
 
 
-def locate(gene_symbols, folder):
+def locate(gene_ids, folder):
     """
     :param folder: directory to save images
-    :param gene_symbols:list of gene symbols
+    :param gene_ids:list of gene symbols
     :return: none
     """
     driver = webdriver.Firefox(executable_path='C:/Users/Zuohan Zhao/geckodriver.exe')
     driver.implicitly_wait(10)
-    for gene in gene_symbols:
-        driver.get('http://www.flyexpress.net/search.php?type=image&search=' + gene)
+    for fb_id in gene_ids:
+        driver.get('http://www.flyexpress.net/search.php?type=image&search=' + fb_id)
         images = driver.find_elements_by_xpath('//td[@class="center"]//a[@data-title="View Large Image."]')
         if len(images) == 0:
             continue
@@ -32,7 +32,6 @@ def locate(gene_symbols, folder):
             if not os.path.exists(stage_path):
                 os.mkdir(stage_path)
             urlretrieve(image.get_attribute('href'), os.path.join(stage_path, ind.text + '.bmp'))
-            sleep(1)
             if i == 15:
                 driver.find_element_by_class_name('page-forward').click()
                 i = 0
@@ -47,4 +46,4 @@ if __name__ == '__main__':
     folder = 'C:/Users/Zuohan Zhao/Pictures/test_crawl'
     if not os.path.exists(folder):
         os.mkdir(folder)
-    locate(gene_ids, folder)
+    locate(gene_ids[14550:], folder)
